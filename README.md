@@ -1,1 +1,1 @@
-# Smooth-ish-ed-particle-hydrodynamics
+Attempted SPH implementation
