@@ -226,7 +226,7 @@ void radix_sort(int *arr, int *indices, int n)
 
 Color getcolor(float density)
 {
-    float t = density / 4.5f;
+    float t = density / 4.2f;
     if (t > 1.0f) t = 1.0f;
 
     return ColorLerp(BLUE, RED, t);
@@ -275,9 +275,9 @@ int main()
     init_particles(n, spacing, WIDTH, HEIGHT, positions);
 
     float gamma = 7.0f;
-    float stiffness_constant = 350.0f;
+    float stiffness_constant = 250.0f;
 
-    float viscosity_coefficicent = 2.5f;
+    float viscosity_coefficicent = 62.5f;
 
     int *particle_hash = malloc(n * sizeof(int));
     int *particle_index = malloc(n * sizeof(int));
@@ -379,7 +379,9 @@ int main()
                         }
                     }
                 }
-                pressures[i] = stiffness_constant * (powf(densities[i] / rest_density, gamma) - 1.0f);
+                float ratio = densities[i]/rest_density;
+                float ratio7 = ratio * ratio * ratio * ratio * ratio * ratio * ratio;
+                pressures[i] = stiffness_constant * (ratio7 - 1.0f);
                 if (pressures[i] < 0.0f) pressures[i] = 0.0f;
             }
 
@@ -422,8 +424,8 @@ int main()
                             float constant_p = m * (pressures[i]/(densities[i] * densities[i]) + pressures[j]/(densities[j] * densities[j]));
 
                             float laplacian = viscosity_laplacian(rel_pos, r2, r, h, h2, h5);
-                            float avg_rho = (densities[i] + densities[j]) * 0.5f;
-                            float constant_v = m * viscosity_coefficicent * laplacian/avg_rho;
+                            //float avg_rho = (densities[i] + densities[j]) * 0.5f;
+                            float constant_v = m * viscosity_coefficicent * laplacian/densities[j];
 
                             Vector2 force_p = scalar_mul(spiky_gradient(rel_pos, r, r2, h, h2, h5), constant_p);
                             Vector2 force_v = scalar_mul(rel_vel, constant_v );
@@ -447,13 +449,25 @@ int main()
                     accelerations[i] = vec_add(accelerations[i], acc);
                 }
             }
+            if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+            {
+                #pragma omp parallel for
+                for (int i = 0; i < n; i++)
+                {
+                    Vector2 rel = vec_sub(mousepos, positions[i]);
+                    float dist = rel.x * rel.x + rel.y * rel.y;
+                    if (dist > 64.0f * h * h) continue;
+                    Vector2 acc = scalar_mul(rel, 390.0f);
+                    accelerations[i] = vec_sub(velocities[i], acc);
+                }
+            }
 
             #pragma omp parallel for
             for (int i = 0; i < n; i++)
             {
                 velocities[i] = vec_add(velocities[i], scalar_mul(accelerations[i], DT));
 
-                velocities[i] = scalar_mul(velocities[i], 0.997f);
+                velocities[i] = scalar_mul(velocities[i], 0.999f);
 
                 float v = mag(velocities[i]);
                 if (v > vmax)
