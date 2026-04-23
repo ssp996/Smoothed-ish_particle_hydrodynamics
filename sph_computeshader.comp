@@ -1,0 +1,39 @@
+#version 430 core
+layout(local_size_x = 256) in;
+
+struct Particle{
+    vec2 position;
+    vec2 velocity;
+};
+
+layout(std430, binding = 0) buffer ParticleBuffer {
+    Particle particles[];
+};
+
+uniform float dt;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= 12000) return;
+
+    particles[i].velocity.y += 150 * dt;
+    particles[i].position += particles[i].velocity * dt;
+
+    if (particles[i].position.x < 3.0) {
+        particles[i].position.x = 3.0;
+        particles[i].velocity.x *= -1.0;
+    }
+    if (particles[i].position.x > 797.0) {
+        particles[i].position.x = 797.0;
+        particles[i].velocity.x *= -1.0;
+    }
+    if (particles[i].position.y < 3.0) {
+        particles[i].position.y = 3.0;
+        particles[i].velocity.y *= -1.0;
+    }
+    if (particles[i].position.y > 797.0) {
+        particles[i].position.y = 797.0;
+        particles[i].velocity.y *= -1.0;
+    }
+}
