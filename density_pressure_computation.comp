@@ -1,0 +1,122 @@
+#version 430 core 
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionBuffer 
+{
+    vec2 positions[];
+};
+
+layout(std430, binding = 3) readonly buffer HashBuffer 
+{
+    int cell_hashes[];
+};
+
+layout(std430, binding = 4) readonly buffer IndexBuffer 
+{
+    int cell_indices[];
+};
+
+layout(std430, binding = 5) readonly buffer CellStartBuffer 
+{
+    int cell_starts[];
+};
+
+layout(std430, binding = 6) readonly buffer CellEndBuffer 
+{
+    int cell_ends[];
+};
+
+layout(std430, binding = 7) writeonly buffer DensityBuffer 
+{
+    float densities[];
+};
+
+layout(std430, binding = 8) writeonly buffer NearDensityBuffer 
+{
+    float near_densities[];
+};
+
+layout(std430, binding = 9) writeonly buffer PressureBuffer 
+{
+    float pressures[];
+};
+
+layout(std430, binding = 10) writeonly buffer NearPressureBuffer 
+{
+    float near_pressures[];
+};
+
+uniform float cell_size;
+uniform float h;
+uniform float spiky2_constant;
+uniform float spiky3_constant;
+uniform float target_density;
+uniform float pressure_multiplier;
+uniform float near_pressure_multiplier;
+uniform ivec2 cells;
+uniform int num_particles;
+
+float spiky2(float r, float h, float spiky2_constant) 
+{
+    if (r > h) return 0.0;
+    float h_r = h - r;
+    return spiky2_constant * h_r * h_r;
+}
+
+float spiky3(float r, float h, float spiky3_constant)
+{
+    if (r > h) return 0.0;
+    float h_r = h - r;
+    return spiky3_constant * h_r * h_r * h_r;
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= num_particles) return;
+
+    int cx = (int)(positions[gid].x/cell_size);
+    int cy = (int)(positions[gid].y/cell_size);
+
+    float local_density = 0.0;
+    float local_near_density = 0.0;
+
+    for (int dx = -1; dx <= 1; dx++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            int nx = cx + dx;
+            int ny = cy + dy;
+
+            if (nx < 0 || ny < 0 || nx >= cells.x || ny >= cells.y) continue;
+
+            int cell = ny * cells.x + nx;
+
+            int start = cell_starts[cell];
+            if (start == -1) continue;
+
+            int end = cell_ends[cell];
+
+            for (int k = start; k < end; k++)
+            {
+                int j = cell_indices[k];
+
+                vec2 rel_pos = positions[j] - positions[gid];
+                float r2 = dot(rel_pos, rel_pos);
+                float r = sqrt(r2);
+
+                local_density += spiky2(r, h, spiky2_constant);
+                local_near_density += spiky3(r, h, spiky3_constant);
+            }
+        }
+    }
+    float pressure_i = (local_density - target_density) * pressure_multiplier;
+    float near_pressure_i = local_near_density * near_pressure_multiplier;
+    
+    densities[gid] = local_density;
+    near_densities[gid] = local_near_density;
+    pressures[gid] = pressure_i;
+    near_pressures[gid] = near_pressure_i;
+}
