@@ -1,0 +1,198 @@
+#version 430 core
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 11) readonly buffer PredictedPositionBuffer 
+{
+    vec2 predicted_positions[];
+};
+
+layout(std430, binding = 0) readonly buffer PositionBuffer 
+{
+    vec2 positions[];
+};
+
+layout(std430, binding = 1) readonly buffer VelocityBuffer 
+{
+    vec2 velocities[];
+};
+
+layout(std430, binding = 2) writeonly buffer AccelerationBuffer 
+{
+    vec2 accelerations[];
+};
+
+layout(std430, binding = 3) readonly buffer HashBuffer 
+{
+    int cell_hashes[];
+};
+
+layout(std430, binding = 4) readonly buffer IndexBuffer 
+{
+    int cell_indices[];
+};
+
+layout(std430, binding = 5) readonly buffer CellStartBuffer 
+{
+    int cell_starts[];
+};
+
+layout(std430, binding = 6) readonly buffer CellEndBuffer 
+{
+    int cell_ends[];
+};
+
+layout(std430, binding = 7) readonly buffer DensityBuffer 
+{
+    float densities[];
+};
+
+layout(std430, binding = 8) readonly buffer NearDensityBuffer 
+{
+    float near_densities[];
+};
+
+layout(std430, binding = 9) readonly buffer PressureBuffer 
+{
+    float pressures[];
+};
+
+layout(std430, binding = 10) readonly buffer NearPressureBuffer 
+{
+    float near_pressures[];
+};
+
+uniform float gravity;
+uniform float h;
+uniform float h2;
+uniform float spiky2_gradient_constant;
+uniform float spiky3_gradient_constant;
+uniform float poly6_constant;
+uniform float coefficient_of_viscosity;
+uniform float cohesion_multiplier;
+uniform float cell_size;
+uniform ivec2 cells;
+uniform ivec2 dimensions;
+uniform int num_particles;
+
+float spiky2_gradient(float h, float r, float spiky2_gradient_constant)
+{
+    if (r > h) return 0.0;
+    float h_r = h - r;
+    return spiky2_gradient_constant * h_r/r;
+}
+
+float spiky3_gradient(float h, float r, float spiky3_gradient_constant)
+{
+    if (r > h) return 0.0;
+    float h_r = h - r;
+    return spiky3_gradient_constant * h_r * h_r/r;
+}
+
+float poly6(float h2, float r2, float poly6_constant)
+{
+    if (r2 > h2) return 0.0;
+    float h2_r2 = h2 - r2;
+    return poly6_constant * h2_r2 * h2_r2 * h2_r2;
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= num_particles) return;
+
+    int cx = int(predicted_positions[gid].x/cell_size);
+    int cy = int(predicted_positions[gid].y/cell_size);
+
+    vec2 local_net_pressure_force = vec2(0.0, 0.0);
+    vec2 local_viscous_force = vec2(0.0, 0.0);
+    vec2 local_cohesive_force = vec2(0.0, 0.0);
+   
+    for (int dx = -1; dx <= 1; dx++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            int nx = cx + dx;
+            int ny = cy + dy;
+
+            if (nx < 0 || ny < 0 || nx >= cells.x || ny >= cells.y) continue;
+
+            int cell = ny * cells.x + nx;
+
+            int start = cell_starts[cell];
+            if (start == -1) continue;
+
+            int end = cell_ends[cell];
+
+            for (int k = start; k < end; k++)
+            {
+                int j = cell_indices[k];
+
+                if (gid == j) continue;
+
+                float pressure_self = pressures[gid];
+                float pressures_other = pressures[j];
+
+                float density_self = densities[gid];
+                float density_other = densities[j];
+
+                float near_pressure_self = near_pressures[gid];
+                float near_pressure_other = near_pressures[j];
+
+                float near_density_self = near_densities[gid];
+                float near_density_other = near_densities[j];
+
+                vec2 velocity_self = velocities[gid];
+                vec2 velocity_other = velocities[j];
+
+                
+
+                vec2 rel_pos = predicted_positions[j] - predicted_positions[gid];
+                float r2 = dot(rel_pos, rel_pos);
+                if (r2 < 0.00001)
+                {
+                    rel_pos = (gid < j) ? vec2(0.01, 0.0) : vec2(-0.01, 0.0);
+                    r2 = 1e-4;
+                }
+                float r = sqrt(r2);
+
+                float shared_pressure = (pressure_self + pressures_other) * 0.5;
+                float shared_near_pressure = (near_pressure_self + near_pressure_other) * 0.5;
+
+                vec2 pressure_force = rel_pos * (spiky2_gradient(h, r, spiky2_gradient_constant) * shared_pressure/density_other);
+                vec2 near_pressure_force =  rel_pos * (spiky3_gradient(h, r, spiky3_gradient_constant) * shared_near_pressure/near_density_other);
+
+                vec2 viscous_force = (velocity_other - velocity_self) * poly6(h2, r2, poly6_constant);
+
+                vec2 cohesive_force = rel_pos * poly6(h2, r2, poly6_constant);
+
+                local_net_pressure_force += pressure_force;
+                local_net_pressure_force += near_pressure_force;
+                local_viscous_force += viscous_force;
+                local_cohesive_force += cohesive_force;
+            }
+        }
+    }
+
+    vec2 boundary_force = vec2(0.0, 0.0);
+    float wall_stiffness = 0.1; 
+    float boundary_distance = h; 
+
+  
+    if (positions[gid].x < boundary_distance) {
+        boundary_force.x += (boundary_distance - positions[gid].x) * wall_stiffness;
+    }
+    
+    if (positions[gid].x > dimensions.x - boundary_distance) {
+        boundary_force.x -= (positions[gid].x - (dimensions.x - boundary_distance)) * wall_stiffness;
+    }
+
+    if (positions[gid].y < boundary_distance) {
+        boundary_force.y += (boundary_distance - positions[gid].y) * wall_stiffness;
+    }
+    vec2 a1 = local_net_pressure_force/densities[gid];
+    vec2 a2 = local_viscous_force * coefficient_of_viscosity;
+    vec2 a3 = local_cohesive_force * cohesion_multiplier;
+    accelerations[gid] = (a1 + a2 +  a3 + vec2(0.0, gravity) + boundary_force);
+}

@@ -1,0 +1,67 @@
+#version 430 core 
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer PositionBuffer 
+{
+    vec2 positions[];
+};
+
+layout(std430, binding = 1) buffer VelocityBuffer 
+{
+    vec2 velocities[];
+};
+
+layout(std430, binding = 2) readonly buffer AccelerationBuffer 
+{
+    vec2 accelerations[];
+};
+
+uniform float dt;
+uniform float velocity_damping;
+uniform float collision_damping;
+uniform float velocity_cap;
+uniform ivec2 dimensions;
+uniform int radius;
+uniform int num_particles;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= num_particles) return;
+
+    velocities[gid] += accelerations[gid] * dt;
+    velocities[gid] *= velocity_damping;
+    float speed = length(velocities[gid]);
+    if (speed >= velocity_cap) 
+    {
+        velocities[gid] = velocities[gid] * (velocity_cap/speed);
+    }
+
+    positions[gid] += velocities[gid] * dt;
+
+    if (positions[gid].x < radius)
+    {
+        positions[gid].x = radius;
+        velocities[gid].x *= -1.0 * collision_damping;
+    }
+
+    if (positions[gid].x > dimensions.x - radius)
+    {
+        positions[gid].x = dimensions.x - radius;
+        velocities[gid].x *= -1.0 * collision_damping;
+    }
+
+    if (positions[gid].y < radius)
+    {
+        positions[gid].y = radius;
+        velocities[gid].y *= -1.0 * collision_damping;
+    }
+
+    if (positions[gid].y > dimensions.y - radius)
+    {
+        positions[gid].y = dimensions.y - radius;
+        velocities[gid].y *= -1.0 * collision_damping;
+    }
+}
