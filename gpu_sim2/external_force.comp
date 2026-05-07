@@ -1,0 +1,44 @@
+#version 430 core 
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionBuffer
+{
+    vec2 positions[];
+};
+
+layout(std430, binding = 2) buffer AccelerationBuffer
+{
+    vec2 accelerations[];
+};
+
+uniform vec2 mouse_pos;
+uniform float dist_threshold;
+uniform float attractor_multiplier;
+uniform float repeller_multiplier;
+uniform int click;
+uniform int num_particles;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= num_particles) return;
+
+    vec2 rel_pos = mouse_pos - positions[gid];
+
+    float dist = dot(rel_pos, rel_pos);
+
+    if (dist > dist_threshold * dist_threshold) return;
+
+    if (click == 0)
+    {
+        vec2 acc = rel_pos * attractor_multiplier;
+        accelerations[gid] += acc;
+    }
+    if (click == 1)
+    {
+        vec2 acc = rel_pos * repeller_multiplier;
+        accelerations[gid] -= acc;
+    }
+}

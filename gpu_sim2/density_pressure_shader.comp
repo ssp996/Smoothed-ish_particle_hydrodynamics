@@ -1,0 +1,102 @@
+#version 430 core 
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionBuffer 
+{
+    vec2 positions[];
+};
+
+layout(std430, binding = 3) readonly buffer HashBuffer 
+{
+    int cell_hashes[];
+};
+
+layout(std430, binding = 4) readonly buffer IndexBuffer 
+{
+    int cell_indices[];
+};
+
+layout(std430, binding = 5) readonly buffer CellStartBuffer 
+{
+    int cell_starts[];
+};
+
+layout(std430, binding = 6) readonly buffer CellEndBuffer 
+{
+    int cell_ends[];
+};
+
+layout(std430, binding = 7) writeonly buffer DensityBuffer 
+{
+    float densities[];
+};
+
+layout(std430, binding = 8) writeonly buffer PressureBuffer 
+{
+    float pressures[];
+};
+
+
+uniform float cell_size;
+uniform float h;
+uniform float h2;
+uniform float m;
+uniform float poly6_constant;
+uniform float target_density;
+uniform float pressure_multiplier;
+uniform ivec2 cells;
+uniform int num_particles;
+
+float poly6(float h2, float r2, float poly6_constant)
+{
+    if (r2 > h2) return 0.0;
+    float h2_r2 = h2 - r2;
+    return poly6_constant * h2_r2 * h2_r2 * h2_r2;
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= num_particles) return;
+
+    int cx = int(positions[gid].x/cell_size);
+    int cy = int(positions[gid].y/cell_size);
+
+    float local_density = 0.0;
+
+    for (int dx = -1; dx <= 1; dx++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            int nx = cx + dx;
+            int ny = cy + dy;
+
+            if (nx < 0 || ny < 0 || nx >= cells.x || ny >= cells.y) continue;
+
+            int cell = ny * cells.x + nx;
+
+            int start = cell_starts[cell];
+            if (start == -1) continue;
+
+            int end = cell_ends[cell];
+
+            for (int k = start; k < end; k++)
+            {
+                int j = cell_indices[k];
+
+                vec2 rel_pos = positions[j] - positions[gid];
+                float r2 = dot(rel_pos, rel_pos);
+
+                local_density += m * poly6(h2, r2, poly6_constant);
+            }
+        }
+    }
+    float ratio = local_density/target_density;
+    float ratio7 = ratio * ratio * ratio * ratio * ratio * ratio * ratio;
+    float pressure_i = max(0.0, pressure_multiplier * (ratio7 - 1.0));
+    
+    densities[gid] = local_density;
+    pressures[gid] = pressure_i;
+}
